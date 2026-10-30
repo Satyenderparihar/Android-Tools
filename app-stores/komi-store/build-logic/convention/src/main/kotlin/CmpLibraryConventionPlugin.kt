@@ -1,0 +1,30 @@
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.kotlin.dsl.dependencies
+import zed.rainxch.githubstore.convention.configureStabilityAnalyzer
+import zed.rainxch.githubstore.convention.libs
+import kotlin.text.get
+
+class CmpLibraryConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) {
+        with(target) {
+            with(pluginManager) {
+                apply("zed.rainxch.convention.kmp.library")
+                apply("org.jetbrains.kotlin.plugin.compose")
+                apply("org.jetbrains.compose")
+            }
+
+            configureStabilityAnalyzer()
+
+            dependencies {
+                "commonMainImplementation"(libs.findLibrary("jetbrains-compose-ui").get())
+                "commonMainImplementation"(libs.findLibrary("jetbrains-compose-foundation").get())
+                "commonMainImplementation"(libs.findLibrary("jetbrains-compose-material3").get())
+                "commonMainImplementation"(libs.findLibrary("jetbrains-compose-material-icons-extended").get())
+
+                // The Android KMP library plugin has no build types, so no debugImplementation
+                "androidRuntimeClasspath"(libs.findLibrary("androidx-compose-ui-tooling").get())
+            }
+        }
+    }
+}

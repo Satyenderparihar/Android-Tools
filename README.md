@@ -13,6 +13,7 @@
 | 🛡️ **App Patchers** | [`morphe-manager`](./app-patchers/morphe-manager) | App patcher, ad-remover & feature unlocker | [MorpheApp/morphe-manager](https://github.com/MorpheApp/morphe-manager) |
 | ⚡ **APK Builders** | [`web-to-app`](./apk-builders/web-to-app) | Turn any web app into standalone APK directly on phone | [shiaho777/web-to-app](https://github.com/shiaho777/web-to-app) |
 | 🛠️ **Utilities** | [`essentials`](./utilities/essentials) | Essential tools & mods for Android power-users | [sameerasw/essentials](https://github.com/sameerasw/essentials) |
+| 🔒 **Storage & Privacy** | [`media-shield`](./storage-and-privacy/media-shield) | Dot (`.`) & `.nomedia` Gallery Hiding Architecture | Internal Guide |
 
 ---
 
@@ -29,6 +30,8 @@ Android-Tools/
 │   └── komi-store/             # Open-source multi-forge release installer
 ├── automotive/
 │   └── DiPlay/                 # CarPlay receiver for Android head units
+├── storage-and-privacy/
+│   └── media-shield/           # Android Dot (.) and .nomedia Gallery Hiding Architecture
 └── utilities/
     └── essentials/             # Essential Android mods & utilities
 ```
@@ -61,6 +64,10 @@ Android-Tools/
 - **Location**: [`utilities/essentials`](./utilities/essentials)
 - **Source**: [sameerasw/essentials](https://github.com/sameerasw/essentials)
 - **विवरण**: Android पॉवर-यूजर्स के लिए छोटे लेकिन बेहद असरदार टूल्स, सिस्टम मॉड्स और क्विक सेटिंग्स टाइल्स का ओपन-सोर्स कलेक्शन (MIT लाइसेंस)।
+
+### 6. 🔒 Storage & Privacy: `media-shield`
+- **Location**: [`storage-and-privacy/media-shield`](./storage-and-privacy/media-shield)
+- **विवरण**: Android MediaStore, Gallery Cache और Linux-आधारित Dot (`.`) व `.nomedia` हिडन फाइल सिस्टम का संपूर्ण डायरेक्टोरियल गाइड। इसके जरिए फोन की Gallery को बिना डेटा डिलीट किए 100% साफ़ और निजी रखा जा सकता है।
 
 ---
 

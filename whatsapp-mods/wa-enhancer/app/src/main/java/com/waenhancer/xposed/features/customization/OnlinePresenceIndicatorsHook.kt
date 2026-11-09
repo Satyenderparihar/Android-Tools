@@ -1,0 +1,418 @@
+package com.waenhancer.xposed.features.customization
+
+import com.waenhancer.app.R
+import com.waenhancer.utils.UiText
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
+import android.text.format.DateFormat
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.TextView
+import com.waenhancer.xposed.core.BaseFeature
+import com.waenhancer.xposed.core.devkit.DexSearchEngine
+import com.waenhancer.xposed.features.automation.PresenceStateStore
+import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XposedBridge
+import org.luckypray.dexkit.query.FindMethod
+import org.luckypray.dexkit.query.enums.StringMatchType
+import org.luckypray.dexkit.query.matchers.MethodMatcher
+import java.lang.ref.WeakReference
+import java.lang.reflect.Modifier
+import java.lang.reflect.Method
+import java.util.Collections
+import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+
+/** Renders process-local presence events on currently bound conversation rows. */
+class OnlinePresenceIndicatorsHook(
+    context: Context,
+    classLoader: ClassLoader,
+    prefs: SharedPreferences
+) : BaseFeature(context, classLoader, prefs) {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val visibleRows = Collections.synchronizedMap(WeakHashMap<View, String>())
+    // Weak values matter: an overlay's parent retains its host row on Android.
+    private val rowOverlays = Collections.synchronizedMap(WeakHashMap<View, WeakReference<FrameLayout>>())
+    private val pendingBindings = Collections.synchronizedMap(WeakHashMap<View, Any>())
+    private val refreshPending = AtomicBoolean()
+    private val showDot = isEnabled("dotonline", false)
+    private val showText = isEnabled("showonlinetext", false)
+    @Volatile private var subscriptionReceiver: Any? = null
+    private var subscriptionMethod: Method? = null
+
+    override val name: String get() = "Online Presence Indicators"
+
+    override fun hook() {
+        if (!showDot && !showText) return
+        try {
+            val bindMethod = DexSearchEngine.getInstance().findMethodWithCache(
+                context, classLoader, "waex_conversation_row_bind_presence_v2"
+            ) { bridge, loader ->
+                bridge.findMethod(
+                    FindMethod.create().matcher(
+                        MethodMatcher.create().addUsingString(
+                            "ConversationViewFiller/setParentGroupProfilePhoto",
+                            StringMatchType.Contains
+                        )
+                    )
+                ).firstOrNull()?.getMethodInstance(loader)
+            }
+            if (bindMethod == null) {
+                XposedBridge.log("[WAEX][OnlinePresence] Conversation row binder not found")
+                return
+            }
+
+            subscriptionMethod = DexSearchEngine.getInstance().findMethodWithCache(
+                context, classLoader, "waex_presence_subscription_sender_v3"
+            ) { bridge, loader ->
+                val target = bridge.findMethod(FindMethod.create().matcher(MethodMatcher.create().addUsingString(
+                    "app/send-presence-subscription jid=", StringMatchType.Contains
+                ))).firstOrNull()
+                target?.callers?.firstOrNull { it.paramCount == 4 }?.getMethodInstance(loader)
+                    ?: target?.getMethodInstance(loader)
+            }
+            subscriptionMethod?.let { method ->
+                XposedBridge.hookAllConstructors(method.declaringClass, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        subscriptionReceiver = param.thisObject
+                    }
+                })
+            }
+
+            XposedBridge.hookMethod(bindMethod, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    // Never reflectively stringify private contact objects for unused diagnostics.
+                    val row = findConversationRow(param.thisObject)
+                    val jid = findJid(param.args, 3)
+                    if ((row == null || jid == null) && bindDiagnostics.getAndIncrement() < 5) {
+                        val hasContactId = jid != null
+                    }
+                    if (row == null) return
+                    if (param.hasThrowable() || jid == null || jid.contains("@g.us")) {
+                        queueBindRow(row, null)
+                        return
+                    }
+                    val contact = param.args?.firstOrNull()
+                    subscriptionMethod?.let { method ->
+                        if (contact != null && method.parameterTypes.size == 4) {
+                            findObjectOfType(contact, method.parameterTypes[0], 4, HashSet())?.let {
+                                recordIdentityAlias(
+                                    PresenceStateStore.normalize(it.toString()),
+                                    PresenceStateStore.normalize(jid)
+                                )
+                            }
+                        }
+                    }
+                    requestPresence(contact)
+                    queueBindRow(row, PresenceStateStore.normalize(jid))
+                }
+            })
+            PresenceStateStore.addListener { _, _ -> queuePresenceRefresh() }
+        } catch (t: Throwable) {
+            XposedBridge.log("[WAEX][OnlinePresence] Setup failed: ${t.javaClass.simpleName}")
+        }
+    }
+
+    private fun queuePresenceRefresh() {
+        // A burst of repeated observations needs one repaint, not an unbounded Handler queue.
+        if (!refreshPending.compareAndSet(false, true)) return
+        if (!mainHandler.post {
+            refreshPending.set(false)
+            val snapshot = synchronized(visibleRows) {
+                visibleRows.entries.map { it.key to it.value }
+            }
+            snapshot.forEach { (row, boundJid) ->
+                if (visibleRows[row] == boundJid && row.getTag(TAG_BOUND_JID) == boundJid) {
+                    render(row, stateForRow(boundJid))
+                }
+            }
+        }) refreshPending.set(false)
+    }
+
+    private fun queueBindRow(row: View, jid: String?) {
+        val token = Any()
+        synchronized(pendingBindings) {
+            pendingBindings[row] = token
+            // Invalidate before a queued observation can reuse the previous contact's row.
+            visibleRows.remove(row)
+        }
+        val weakRow = WeakReference(row)
+        mainHandler.post {
+            val current = weakRow.get() ?: return@post
+            synchronized(pendingBindings) {
+                if (pendingBindings[current] !== token) return@post
+                pendingBindings.remove(current)
+                if (jid == null || jid.isEmpty()) clearRow(current) else bindRow(current, jid)
+            }
+        }
+    }
+
+    private fun clearRow(row: View) {
+        visibleRows.remove(row)
+        row.setTag(TAG_BOUND_JID, null)
+        render(row, null)
+    }
+
+    private fun stateForRow(jid: String): PresenceStateStore.State? {
+        // These are only explicit identity links recorded from the existing host path.
+        // Never infer a phone/LID mapping by stripping a suffix or comparing prefixes.
+        val keys = linkedSetOf(jid)
+        identityAliases.entries.forEach { (alias, canonical) ->
+            if (canonical == jid) keys.add(alias)
+        }
+        return PresenceStateStore.getLatest(keys)
+    }
+
+    private fun bindRow(row: View, jid: String) {
+        val group = row as? ViewGroup ?: return
+        ensureOverlay(group)
+        visibleRows[row] = jid
+        row.setTag(TAG_BOUND_JID, jid)
+        render(row, stateForRow(jid))
+    }
+
+    private fun requestPresence(contact: Any?) {
+        val method = subscriptionMethod ?: return
+        val receiver = subscriptionReceiver ?: return
+        if (contact == null || method.parameterTypes.size != 4) return
+        val jidObject = findObjectOfType(contact, method.parameterTypes[0], 4, HashSet()) ?: return
+        val key = jidObject.toString()
+        val now = SystemClock.uptimeMillis()
+        val previous = subscriptions[key]
+        if (previous != null && now - previous < 30_000L) return
+        recordSubscription(key, now)
+        try {
+            val tokenType = method.parameterTypes[2]
+            val tokenConstructor = tokenType.declaredConstructors.firstOrNull()
+            val token = tokenConstructor?.let { constructor ->
+                constructor.isAccessible = true
+                val values = constructor.parameterTypes.map { type ->
+                    when {
+                        !type.isPrimitive -> null
+                        type == Boolean::class.javaPrimitiveType -> false
+                        type == Byte::class.javaPrimitiveType -> 0.toByte()
+                        type == Short::class.javaPrimitiveType -> 0.toShort()
+                        type == Int::class.javaPrimitiveType -> 0
+                        type == Long::class.javaPrimitiveType -> 0L
+                        type == Float::class.javaPrimitiveType -> 0f
+                        type == Double::class.javaPrimitiveType -> 0.0
+                        type == Char::class.javaPrimitiveType -> '\u0000'
+                        else -> null
+                    }
+                }.toTypedArray()
+                constructor.newInstance(*values)
+            }
+            method.isAccessible = true
+            method.invoke(null, jidObject, null, token, receiver)
+        } catch (t: Throwable) {
+            if (subscriptionDiagnostics.getAndIncrement() < 5) {
+                XposedBridge.log("[WAEX][OnlinePresence] Presence request failed: ${t.javaClass.simpleName}")
+            }
+        }
+    }
+
+    private fun findObjectOfType(value: Any?, wanted: Class<*>, depth: Int, seen: MutableSet<Any>): Any? {
+        if (value == null || depth < 0 || !seen.add(value)) return null
+        if (wanted.isInstance(value)) return value
+        var type: Class<*>? = value.javaClass
+        while (type != null && !type.name.startsWith("java.") && !type.name.startsWith("android.")) {
+            for (field in type.declaredFields) {
+                if (Modifier.isStatic(field.modifiers)) continue
+                try {
+                    field.isAccessible = true
+                    findObjectOfType(field.get(value), wanted, depth - 1, seen)?.let { return it }
+                } catch (_: Throwable) {}
+            }
+            type = type.superclass
+        }
+        return null
+    }
+
+    private fun ensureOverlay(row: ViewGroup): FrameLayout {
+        rowOverlays[row]?.get()?.let { return it }
+        val overlay = FrameLayout(row.context).apply {
+            id = ID_OVERLAY
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        if (showDot) {
+            overlay.addView(View(row.context).apply {
+                id = ID_DOT
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.rgb(37, 211, 102))
+                    setStroke(dp(2), Color.rgb(18, 27, 31))
+                }
+                visibility = View.GONE
+            }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.START or Gravity.TOP).apply {
+                marginStart = dp(53)
+                topMargin = dp(7)
+            })
+        }
+        if (showText) {
+            overlay.addView(TextView(row.context).apply {
+                id = ID_TEXT
+                textSize = 12f
+                setTextColor(Color.rgb(37, 211, 102))
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24), Gravity.END or Gravity.TOP).apply {
+                marginEnd = dp(12)
+                topMargin = dp(28)
+            })
+        }
+        row.overlay.add(overlay)
+        val updateBounds = {
+            layoutOverlay(row, overlay)
+        }
+        row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateBounds() }
+        row.post { updateBounds() }
+        rowOverlays[row] = WeakReference(overlay)
+        return overlay
+    }
+
+    private fun layoutOverlay(row: View, overlay: FrameLayout) {
+        // ViewGroupOverlay does not perform the normal measurement/layout pass for us.
+        overlay.layoutDirection = row.layoutDirection
+        overlay.measure(
+            View.MeasureSpec.makeMeasureSpec(row.width.coerceAtLeast(0), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(row.height.coerceAtLeast(0), View.MeasureSpec.EXACTLY)
+        )
+        overlay.layout(0, 0, row.width, row.height)
+        overlay.invalidate()
+    }
+
+    private fun render(row: View, state: PresenceStateStore.State?) {
+        val overlay = rowOverlays[row]?.get() ?: return
+        overlay.findViewById<View>(ID_DOT)?.visibility = if (state?.known == true && state.online) View.VISIBLE else View.GONE
+        overlay.findViewById<TextView>(ID_TEXT)?.let { text ->
+            when {
+                state == null || !state.known -> { text.text = ""; text.visibility = View.GONE }
+                state.online -> { text.text = UiText.get(R.string.waex_ui_online, "online"); text.visibility = View.VISIBLE }
+                else -> {
+                    val time = DateFormat.getTimeFormat(row.context).format(state.changedAtMillis)
+                    text.text = UiText.get(R.string.waex_ui_last_seen_1_s, "last seen %1\$s", time)
+                    text.visibility = View.VISIBLE
+                }
+            }
+        }
+        layoutOverlay(row, overlay)
+    }
+
+    /** Finds the bound conversation row rather than whichever View happens to be the first
+     * field on WhatsApp's filler object (currently that first field is the home search bar). */
+    private fun findConversationRow(value: Any?): View? {
+        val candidates = ArrayList<View>()
+        collectViews(value, 4, Collections.newSetFromMap(WeakHashMap()), candidates)
+        val sample = candidates.firstOrNull() ?: return null
+        val resources = sample.resources
+        val packageName = sample.context.packageName
+        val contactSelectorId = resources.getIdentifier("contact_selector", "id", packageName)
+        val conversationContentId = resources.getIdentifier("conversations_row_content", "id", packageName)
+        val rowContentId = resources.getIdentifier("row_content", "id", packageName)
+        if (contactSelectorId == 0 || (conversationContentId == 0 && rowContentId == 0)) return null
+        return candidates.asSequence()
+            .filterIsInstance<ViewGroup>()
+            .filter { candidate ->
+                candidate.findViewById<View>(contactSelectorId) != null &&
+                    ((conversationContentId != 0 && candidate.findViewById<View>(conversationContentId) != null) ||
+                        (rowContentId != 0 && candidate.findViewById<View>(rowContentId) != null))
+            }
+            .filter { it.height == 0 || it.height in dp(56)..dp(128) }
+            .minByOrNull { candidate ->
+                val width = if (candidate.width > 0) candidate.width else Int.MAX_VALUE / 1024
+                val height = if (candidate.height > 0) candidate.height else Int.MAX_VALUE / 1024
+                width.toLong() * height.toLong()
+            }
+    }
+
+    private fun collectViews(value: Any?, depth: Int, seen: MutableSet<Any>, output: MutableList<View>) {
+        if (value == null || depth < 0 || !seen.add(value)) return
+        if (value is View) {
+            output.add(value)
+            return
+        }
+        var type: Class<*>? = value.javaClass
+        while (type != null && !type.name.startsWith("java.") && !type.name.startsWith("android.")) {
+            for (field in type.declaredFields) {
+                if (Modifier.isStatic(field.modifiers)) continue
+                try {
+                    field.isAccessible = true
+                    collectViews(field.get(value), depth - 1, seen, output)
+                } catch (_: Throwable) {}
+            }
+            type = type.superclass
+        }
+    }
+
+    private fun findJid(values: Array<out Any?>?, depth: Int): String? {
+        if (values == null) return null
+        val seen = Collections.newSetFromMap(WeakHashMap<Any, Boolean>())
+        values.forEach { findJid(it, depth, seen)?.let { jid -> return jid } }
+        return null
+    }
+
+    private fun findJid(value: Any?, depth: Int, seen: MutableSet<Any>): String? {
+        if (value == null || depth < 0 || !seen.add(value)) return null
+        val rendered = try { value.toString() } catch (_: Throwable) { "" }
+        Regex("[+0-9A-Za-z._:-]+@lid|[+0-9A-Za-z._:-]+@(s\\.)?whatsapp\\.net|[+0-9A-Za-z._:-]+@g\\.us")
+            .find(rendered)?.value?.let { return it }
+        var type: Class<*>? = value.javaClass
+        while (type != null && !type.name.startsWith("java.") && !type.name.startsWith("android.")) {
+            for (field in type.declaredFields) {
+                if (Modifier.isStatic(field.modifiers)) continue
+                try {
+                    field.isAccessible = true
+                    findJid(field.get(value), depth - 1, seen)?.let { return it }
+                } catch (_: Throwable) {}
+            }
+            type = type.superclass
+        }
+        return null
+    }
+
+    private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun recordSubscription(key: String, timestamp: Long) {
+        subscriptions[key] = timestamp
+        if (subscriptions.size > MAX_TRACKED_IDENTITIES) {
+            subscriptions.entries.minByOrNull { it.value }?.let { subscriptions.remove(it.key, it.value) }
+        }
+    }
+
+    private fun recordIdentityAlias(alias: String, jid: String) {
+        if (alias.isBlank() || jid.isBlank()) return
+        if (identityAliases.size >= MAX_TRACKED_IDENTITIES && !identityAliases.containsKey(alias)) {
+            identityAliases.clear()
+        }
+        // A conflicting link is not evidence that two different rows are one contact.
+        identityAliases.compute(alias) { _, previous ->
+            if (previous == null || previous == jid) jid else ""
+        }
+        queuePresenceRefresh()
+    }
+
+    companion object {
+        private const val MAX_TRACKED_IDENTITIES = 2048
+        private const val ID_OVERLAY = 0x7f0f7a10
+        private const val ID_DOT = 0x7f0f7a11
+        private const val ID_TEXT = 0x7f0f7a12
+        private const val TAG_BOUND_JID = 0x7f0f7a13
+        private val bindDiagnostics = AtomicInteger()
+        private val subscriptionDiagnostics = AtomicInteger()
+        private val subscriptions = ConcurrentHashMap<String, Long>()
+        private val identityAliases = ConcurrentHashMap<String, String>()
+    }
+}

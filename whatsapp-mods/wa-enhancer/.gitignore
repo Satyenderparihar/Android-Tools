@@ -1,0 +1,53 @@
+# Gradle and Kotlin build state
+.gradle/
+.kotlin/
+**/build/
+out/
+
+# Android build products
+*.apk
+*.aab
+*.apks
+output-metadata.json
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+
+# Local Android configuration
+local.properties
+
+# IDE and editor state
+.idea/
+.vscode/
+*.iml
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.trace
+*~
+**/.DS_Store
+
+# Signing material and service configuration
+*.jks
+*.keystore
+google-services.json
+
+# Local investigation material and generated documentation
+/references/
+/private_docs/
+/.agents/
+/tools/
+
+# Private implementation module, supplied outside the public repository
+/licensing/
+
+*/__pycache__
+.pytest_cache
+analysis

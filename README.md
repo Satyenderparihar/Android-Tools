@@ -14,6 +14,7 @@
 | ⚡ **APK Builders** | [`web-to-app`](./apk-builders/web-to-app) | Turn any web app into standalone APK directly on phone | [shiaho777/web-to-app](https://github.com/shiaho777/web-to-app) |
 | 🛠️ **Utilities** | [`essentials`](./utilities/essentials) | Essential tools & mods for Android power-users | [sameerasw/essentials](https://github.com/sameerasw/essentials) |
 | 🔒 **Storage & Privacy** | [`media-shield`](./storage-and-privacy/media-shield) | Dot (`.`) & `.nomedia` Gallery Hiding Architecture | Internal Guide |
+| 💬 **WhatsApp & Messaging Mods** | [`wa-enhancer`](./whatsapp-mods/wa-enhancer) | Xposed/LSPosed runtime enhancer for WhatsApp & WhatsApp Business (Anti-Revoke, View-Once bypass, Meta AI remover) | [WaEnhancerX/WaEnhancerX](https://github.com/WaEnhancerX/WaEnhancerX) / [mubashardev](https://github.com/mubashardev/WaEnhancer) |
 
 ---
 
@@ -32,8 +33,10 @@ Android-Tools/
 │   └── DiPlay/                 # CarPlay receiver for Android head units
 ├── storage-and-privacy/
 │   └── media-shield/           # Android Dot (.) and .nomedia Gallery Hiding Architecture
-└── utilities/
-    └── essentials/             # Essential Android mods & utilities
+├── utilities/
+│   └── essentials/             # Essential Android mods & utilities
+└── whatsapp-mods/
+    └── wa-enhancer/            # LSPosed runtime enhancer for WhatsApp & WhatsApp Business
 ```
 
 ---
@@ -68,6 +71,20 @@ Android-Tools/
 ### 6. 🔒 Storage & Privacy: `media-shield`
 - **Location**: [`storage-and-privacy/media-shield`](./storage-and-privacy/media-shield)
 - **विवरण**: Android MediaStore, Gallery Cache और Linux-आधारित Dot (`.`) व `.nomedia` हिडन फाइल सिस्टम का संपूर्ण डायरेक्टोरियल गाइड। इसके जरिए फोन की Gallery को बिना डेटा डिलीट किए 100% साफ़ और निजी रखा जा सकता है।
+
+### 7. 💬 WhatsApp & Messaging Mods: `wa-enhancer`
+- **Location**: [`whatsapp-mods/wa-enhancer`](./whatsapp-mods/wa-enhancer)
+- **Source**: [WaEnhancerX/WaEnhancerX](https://github.com/WaEnhancerX/WaEnhancerX) | [mubashardev/WaEnhancer](https://github.com/mubashardev/WaEnhancer)
+- **Personal Fork**: [Satyenderparihar/WaEnhancerX](https://github.com/Satyenderparihar/WaEnhancerX) & [Satyenderparihar/WaEnhancer](https://github.com/Satyenderparihar/WaEnhancer)
+- **विवरण**: आधिकारिक Google Play Store वाले **WhatsApp** और **WhatsApp Business** दोनों के लिए एक उन्नत Xposed/LSPosed मॉड्यूल। यह APK को मॉडिफाई किए बिना सीधे RAM/रनटाइम में हुक करता है।
+  - **प्रमुख क्षमताएँ**:
+    - **Anti-Revoke / Anti-Delete**: प्रेषक द्वारा डिलीट किए गए संदेश और स्टेटस हमेशा दिखाई देंगे।
+    - **View-Once Bypass**: एक बार देखे जाने वाले मीडिया पर लगे प्रतिबंध को हटाकर असीमित बार देखने व सेव करने की छूट।
+    - **Meta AI Controls**: इंटरफ़ेस से Meta AI सर्च बार और फ्लोटिंग आइकन को पूरी तरह छिपाना।
+    - **Uncompressed Media**: फ़ोटो और वीडियो को बिना कंप्रेशन के उच्च गुणवत्ता में भेजना।
+    - **Custom Privacy**: ब्लू टिक, सेकंड टिक, टाइपिंग और रिकॉर्डिंग संकेतकों को अपनी इच्छानुसार नियंत्रित करना।
+    - **Dual WhatsApp Engine**: स्टैंडर्ड WhatsApp (`com.whatsapp`) और WhatsApp Business (`com.whatsapp.w4b`) दोनों का पूर्ण स्वतंत्र समर्थन।
+  - **ज़रूरी आवश्यकताएँ**: Rooted Android (Magisk, KernelSU या APatch) + LSPosed Framework (Zygisk).
 
 ---
 
